@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         UOOC_优课刷课_sztu软件工程
 // @namespace    https://github.com/lzh19830513588-prog/uooc-video-autoplay
-// @version      2.5.0
+// @version      2.5.1
 // @license      MPL-2.0
 // @description  播放未完成视频、跳过章节测试、处理鼠标移出导致的自动暂停
 // @author       somebody in SZTU
@@ -33,7 +33,7 @@
 
     function status(message, error = false) {
         if (message !== lastMessage) {
-            (error ? console.error : console.log)("[UOOC 2.5.0]", message);
+            (error ? console.error : console.log)("[UOOC]", message);
             lastMessage = message;
         }
         let badge = document.getElementById("uooc-autoplay-status-250");
@@ -49,7 +49,7 @@
         }
         if (badge) {
             badge.style.background = error ? "#a32626" : "#195c40";
-            badge.textContent = `UOOC 2.5：${message}`;
+            badge.textContent = `UOOC：${message}`;
         }
     }
 
@@ -194,6 +194,11 @@
         return !!layer && layer.getClientRects().length > 0 && getComputedStyle(layer).visibility !== "hidden";
     }
 
+    function quizPageVisible() {
+        const text = document.body?.innerText || "";
+        return text.includes("试卷结构") && text.includes("提交试卷");
+    }
+
     function nearEnd(video) {
         return Number.isFinite(video.duration) && video.duration > 0 &&
             video.currentTime >= video.duration - 0.75;
@@ -259,6 +264,7 @@
     // 独立于章节遍历：即使目录读取失败，也持续设置 2 倍速并恢复非手动暂停。
     let watchdogBusy = false;
     setInterval(() => {
+        if (quizPageVisible()) return;
         const video = currentVideo();
         if (!video || video.isConnected === false || video.readyState < 1) return;
         applyPreferences(video);
@@ -318,12 +324,19 @@
         status("等待课程视频");
         let previous = null;
         while (true) {
-            let info = await waitFor(hashInfo, 30000, "30 秒内未进入视频小节");
+            if (quizPageVisible()) {
+                status("测验页面，暂停视频连播");
+                await sleep(2000);
+                continue;
+            }
+            let info = await waitFor(() => quizPageVisible() ? "quiz" : hashInfo(), 30000, "30 秒内未进入视频小节");
+            if (info === "quiz") continue;
 
             if (!currentVideo()) {
                 status("等待播放器加载");
                 const loaded = await waitFor(currentVideo, 10000, "播放器暂未出现").catch(() => null);
                 if (!loaded) {
+                    if (quizPageVisible()) continue;
                     const videos = await waitFor(courseVideos, 20000, "找不到课程目录");
                     const next = nextUnfinished(videos, info.sourceId);
                     if (!next) { status("没有待播放视频"); return; }
@@ -363,6 +376,7 @@
                 status(`已播放完 ${info.sourceId}`);
                 await sleep(1000);
             }
+            if (quizPageVisible()) continue;
             const videos = await waitFor(courseVideos, 15000, "课程目录未加载，无法自动切换下一个视频");
             const next = nextUnfinished(videos, info.sourceId);
             if (!next) { status("没有待播放视频，已停止"); return; }
